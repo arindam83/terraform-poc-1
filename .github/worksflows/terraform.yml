@@ -1,0 +1,44 @@
+name: Terraform Deployment
+
+on:
+  push:
+    branches:
+      - main  # Runs on push to main branch
+  pull_request:
+    branches:
+      - main  # Runs on PRs to main
+
+jobs:
+  terraform:
+    name: "Terraform Apply"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🔹 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔹 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+
+      - name: 🔹 Authenticate with Terraform Cloud
+        run: echo "TFC_TOKEN=${{ secrets.TFC_TOKEN }}" >> $GITHUB_ENV
+
+      - name: 🔹 Initialize Terraform
+        run: terraform init
+        env:
+          TF_CLOUD_ORGANIZATION: "arindam"
+          TF_WORKSPACE: "my-tfagent-ws-01"
+          TF_TOKEN_app_terraform_io: ${{ secrets.TFC_TOKEN }}
+
+      - name: 🔹 Terraform Plan
+        run: terraform plan
+        env:
+          TF_WORKSPACE: "my-tfagent-ws-01"
+
+      - name: 🔹 Terraform Apply (on Push to Main)
+        if: github.event_name == 'push'
+        run: terraform apply -auto-approve tfplan
+        env:
+          TF_WORKSPACE: "my-tfagent-ws-01"
