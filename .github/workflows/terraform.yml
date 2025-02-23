@@ -3,10 +3,10 @@ name: Terraform Deployment
 on:
   push:
     branches:
-      - main  # Runs on push to main branch
+      - main
   pull_request:
     branches:
-      - main  # Runs on PRs to main
+      - main
 
 jobs:
   terraform:
@@ -29,16 +29,15 @@ jobs:
         run: terraform init
         env:
           TF_CLOUD_ORGANIZATION: "arindam"
-          TF_WORKSPACE: "my-tfagent-ws-01"
           TF_TOKEN_app_terraform_io: ${{ secrets.TFC_TOKEN }}
 
+      - name: 🔹 Select Terraform Workspace
+        run: |
+          terraform workspace select my-tfagent-ws-01 || terraform workspace new my-tfagent-ws-01
+
       - name: 🔹 Terraform Plan
-        run: terraform plan
-        env:
-          TF_WORKSPACE: "my-tfagent-ws-01"
+        run: terraform plan -out=tfplan
 
       - name: 🔹 Terraform Apply (on Push to Main)
         if: github.event_name == 'push'
         run: terraform apply -auto-approve tfplan
-        env:
-          TF_WORKSPACE: "my-tfagent-ws-01"
