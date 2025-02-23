@@ -1,4 +1,4 @@
-name: Terraform Deployment
+name: 'Terraform Deploy'
 
 on:
   push:
@@ -8,36 +8,128 @@ on:
     branches:
       - main
 
-jobs:
-  terraform:
-    name: "Terraform Apply"
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
+  pull-requests: write
 
+env:
+  TF_CLOUD_ORGANIZATION: "arindam"
+  TF_API_TOKEN: "${{ secrets.TF_API_TOKEN }}"
+  TF_WORKSPACE: "my-tfagent-ws-01"
+  ARM_CLIENT_ID: "${{ secrets.AZURE_CLIENT_ID }}"
+  ARM_CLIENT_SECRET: "${{ secrets.AZURE_CLIENT_SECRET }}"
+  ARM_SUBSCRIPTION_ID: "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+  ARM_TENANT_ID: "${{ secrets.AZURE_TENANT_ID }}"
+
+jobs:
+  init:
+    name: 'Terraform Init'
+    runs-on: ubuntu-latest
     steps:
-      - name: 🔹 Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 🔹 Setup Terraform
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.10.5
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
 
-      - name: 🔹 Authenticate with Terraform Cloud
-        run: echo "TFC_TOKEN=${{ secrets.TFC_TOKEN }}" >> $GITHUB_ENV
+      - name: Terraform Format
+        id: fmt
+        run: terraform fmt -check
+        continue-on-error: true
 
-      - name: 🔹 Initialize Terraform
+      - name: Terraform Init
+        id: init
         run: terraform init
-        env:
-          TF_CLOUD_ORGANIZATION: "arindam"
-          TF_TOKEN_app_terraform_io: ${{ secrets.TFC_TOKEN }}
 
-      - name: 🔹 Select Terraform Workspace
+  plan:
+    name: 'Terraform Plan'
+    needs: init
+    runs-on: ubuntu-latest
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+    
+    outputs:
+      changes_detected: ${{ steps.check_plan.outputs.changes_detected }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -input=false | tee plan.out
+
+      - name: Check for Changes
+        id: check_plan
         run: |
-          terraform workspace select my-tfagent-ws-01 || terraform workspace new my-tfagent-ws-01
+          if grep -q "No changes" plan.out; then
+            echo "No changes detected"
+            echo "changes_detected=false" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected"
+            echo "changes_detected=true" >> $GITHUB_OUTPUT
+          fi
 
-      - name: 🔹 Terraform Plan
-        run: terraform plan -out=tfplan
+      - name: Update Pull Request
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        env:
+          PLAN: "${{ steps.plan.outputs.stdout }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Terraform Plan 📖\`${{ steps.plan.outcome }}\`
+            
+            <details><summary>Show Plan</summary>
+            
+            \`\`\`\n
+            ${process.env.PLAN}
+            \`\`\`
+            
+            </details>`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
 
-      - name: 🔹 Terraform Apply (on Push to Main)
-        if: github.event_name == 'push'
-        run: terraform apply -auto-approve tfplan
+  apply:
+    name: 'Terraform Apply'
+    needs: plan
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.plan.outputs.changes_detected == 'true'
+    env:
+      ARM_CLIENT_ID: "${{ secrets.AZURE_CLIENT_ID }}"
+      ARM_CLIENT_SECRET: "${{ secrets.AZURE_CLIENT_SECRET }}"
+      ARM_SUBSCRIPTION_ID: "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+      ARM_TENANT_ID: "${{ secrets.AZURE_TENANT_ID }}"
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false
