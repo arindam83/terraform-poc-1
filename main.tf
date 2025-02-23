@@ -7,5 +7,5 @@ resource "azurerm_resource_group" "rg" {
   name     = "iac-poc-rg"
   location = "East US"
 }
-#new rg  creation
+#new rg creation
 
