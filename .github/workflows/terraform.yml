@@ -14,121 +14,88 @@ permissions:
 
 env:
   TF_CLOUD_ORGANIZATION: "arindam"
+  TFC_WORKSPACE: "my-terraform-workspace"
   TFC_TOKEN: "${{ secrets.TFC_TOKEN }}"
-  ARM_CLIENT_ID: "${{ secrets.AZURE_CLIENT_ID }}"
-  ARM_CLIENT_SECRET: "${{ secrets.AZURE_CLIENT_SECRET }}"
-  ARM_SUBSCRIPTION_ID: "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
-  ARM_TENANT_ID: "${{ secrets.AZURE_TENANT_ID }}"
+  GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
 
 jobs:
-  init:
-    name: 'Terraform Init'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          cli_config_credentials_token: ${{ secrets.TFC_TOKEN }}
-
-      - name: Terraform Format
-        id: fmt
-        run: terraform fmt -check
-        continue-on-error: true
-
-      - name: Terraform Init
-        id: init
-        run: terraform init
-
   plan:
     name: 'Terraform Plan'
-    needs: init
     runs-on: ubuntu-latest
-    env:
-      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-    
-    outputs:
-      changes_detected: ${{ steps.check_plan.outputs.changes_detected }}
-
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          cli_config_credentials_token: ${{ secrets.TFC_TOKEN }}
-
-      - name: Terraform Init
-        run: terraform init
-
-      - name: Terraform Plan
-        id: plan
-        run: terraform plan -no-color -input=false | tee plan.out
-
-      - name: Check for Changes
-        id: check_plan
+      - name: Trigger Terraform Plan in Terraform Cloud
+        id: tf_plan
         run: |
-          if grep -q "No changes" plan.out; then
-            echo "No changes detected"
-            echo "changes_detected=false" >> $GITHUB_OUTPUT
-          else
-            echo "Changes detected"
-            echo "changes_detected=true" >> $GITHUB_OUTPUT
-          fi
+          RUN_URL=$(curl -s --request POST \
+            --header "Authorization: Bearer $TFC_TOKEN" \
+            --header "Content-Type: application/vnd.api+json" \
+            --data '{
+              "data": {
+                "attributes": {
+                  "message": "GitHub Actions Triggered Plan",
+                  "plan-only": true
+                },
+                "type": "runs",
+                "relationships": {
+                  "workspace": {
+                    "data": {
+                      "type": "workspaces",
+                      "id": "'"$(curl -s --header "Authorization: Bearer $TFC_TOKEN" \
+                      "https://app.terraform.io/api/v2/organizations/$TF_CLOUD_ORGANIZATION/workspaces/$TFC_WORKSPACE" \
+                      | jq -r '.data.id')"'"
+                    }
+                  }
+                }
+              }
+            }' "https://app.terraform.io/api/v2/runs" | jq -r '.data.attributes."web-ui-url"')
 
-      - name: Update Pull Request
-        uses: actions/github-script@v7
+          echo "Terraform Plan URL: $RUN_URL"
+          echo "PLAN_URL=$RUN_URL" >> $GITHUB_ENV
+
+      - name: Comment Plan URL on PR
         if: github.event_name == 'pull_request'
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body "Terraform Plan triggered: [$PLAN_URL]($PLAN_URL)"
         env:
-          PLAN: "${{ steps.plan.outputs.stdout }}"
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const output = `#### Terraform Plan 📖\`${{ steps.plan.outcome }}\`
-            
-            <details><summary>Show Plan</summary>
-            
-            \`\`\`\n
-            ${process.env.PLAN}
-            \`\`\`
-            
-            </details>`;
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: output
-            })
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   apply:
     name: 'Terraform Apply'
     needs: plan
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.plan.outputs.changes_detected == 'true'
-    env:
-      ARM_CLIENT_ID: "${{ secrets.AZURE_CLIENT_ID }}"
-      ARM_CLIENT_SECRET: "${{ secrets.AZURE_CLIENT_SECRET }}"
-      ARM_SUBSCRIPTION_ID: "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
-      ARM_TENANT_ID: "${{ secrets.AZURE_TENANT_ID }}"
-    
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Trigger Terraform Apply in Terraform Cloud
+        id: tf_apply
+        run: |
+          RUN_URL=$(curl -s --request POST \
+            --header "Authorization: Bearer $TFC_TOKEN" \
+            --header "Content-Type: application/vnd.api+json" \
+            --data '{
+              "data": {
+                "attributes": {
+                  "message": "GitHub Actions Triggered Apply"
+                },
+                "type": "runs",
+                "relationships": {
+                  "workspace": {
+                    "data": {
+                      "type": "workspaces",
+                      "id": "'"$(curl -s --header "Authorization: Bearer $TFC_TOKEN" \
+                      "https://app.terraform.io/api/v2/organizations/$TF_CLOUD_ORGANIZATION/workspaces/$TFC_WORKSPACE" \
+                      | jq -r '.data.id')"'"
+                    }
+                  }
+                }
+              }
+            }' "https://app.terraform.io/api/v2/runs" | jq -r '.data.attributes."web-ui-url"')
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          cli_config_credentials_token: ${{ secrets.TFC_TOKEN }}
+          echo "Terraform Apply URL: $RUN_URL"
+          echo "APPLY_URL=$RUN_URL" >> $GITHUB_ENV
 
-      - name: Terraform Init
-        run: terraform init
-
-      - name: Terraform Apply
-        run: terraform apply -auto-approve -input=false
+      - name: Log Apply URL
+        run: echo "Terraform Apply triggered: $APPLY_URL"
