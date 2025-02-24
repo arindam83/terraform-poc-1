@@ -6,6 +6,10 @@ provider "azurerm" {
 resource "azurerm_resource_group" "rg" {
   name     = "iac-poc-rg"
   location = "East US"
+   tags = {
+    Environment = "POC"
+    Owner       = "Arindam"
+  }
 }
 #new rg  creation
 
