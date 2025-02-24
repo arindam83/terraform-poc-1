@@ -17,6 +17,7 @@ env:
   TFC_WORKSPACE: "my-terraform-workspace"
   TFC_TOKEN: "${{ secrets.TFC_TOKEN }}"
   GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+  APPLY_URL: "https://app.terraform.io/app/arindam/workspaces/my-workspace/runs"
 
 jobs:
   plan:
@@ -98,4 +99,4 @@ jobs:
           echo "APPLY_URL=$RUN_URL" >> $GITHUB_ENV
 
       - name: Log Apply URL
-        run: echo "Terraform Apply triggered: $APPLY_URL"
+        run: echo "Terraform Apply triggered ${{ env.APPLY_URL }}"
