@@ -8,7 +8,7 @@ resource "azurerm_resource_group" "rg" {
   location = "East US"
    tags = {
     Environment = "POC"
-    Owner       = "Arindam halder1"
+    Owner       = "Arindam Mithun"
   }
 }
 #new rg  creation
